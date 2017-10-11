@@ -4,7 +4,9 @@ import (
 	"net"
 
 	"github.com/sirupsen/logrus"
+	"github.com/superfly/wormhole/config"
 	"github.com/superfly/wormhole/messages"
+	wnet "github.com/superfly/wormhole/net"
 )
 
 // Session hold information about connected client
@@ -20,8 +22,22 @@ type Session interface {
 	Key() string
 	Release() *messages.Release
 	RequireStream() error
-	RequireAuthentication() error
+	// SessionReady indicates that the session has been added
+	// to the proper backends and is ready for accepting tunnels
+	// For example, this could send a ControlSuccess message
+	SessionReady() error
+	AddTunnel(*wnet.Conn) error
 	Close()
+}
+
+type SessionArgs struct {
+	Logger     *logrus.Logger
+	ClusterURL string
+	NodeID     string
+	Pool       *redis.Pool
+	Conn       *wnet.Conn
+	Config     *config.ServerConfig
+	BackendID  string
 }
 
 type baseSession struct {

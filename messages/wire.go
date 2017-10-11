@@ -16,7 +16,9 @@ func init() {
 
 	t := func(obj interface{}) reflect.Type { return reflect.TypeOf(obj).Elem() }
 	TypeMap["AuthControl"] = t((*AuthControl)(nil))
+	TypeMap["ControlSuccess"] = t((*AuthControl)(nil))
 	TypeMap["AuthTunnel"] = t((*AuthTunnel)(nil))
+	TypeMap["AuthFailed"] = t((*AuthFailed)(nil))
 	TypeMap["OpenTunnel"] = t((*OpenTunnel)(nil))
 	TypeMap["Ping"] = t((*Ping)(nil))
 	TypeMap["Pong"] = t((*Pong)(nil))
@@ -64,9 +66,16 @@ type Handshake struct {
 	ConnectionType ConnectionType
 }
 
+type AuthFailed struct {
+	Error string
+}
+
 // AuthControl is sent by the client to create and authenticate a new session
 type AuthControl struct {
 	Token string
+}
+
+type ControlSuccess struct {
 }
 
 // AuthTunnel is sent by the client to create and authenticate a tunnel connection
