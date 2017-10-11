@@ -21,6 +21,9 @@ func init() {
 	TypeMap["Ping"] = t((*Ping)(nil))
 	TypeMap["Pong"] = t((*Pong)(nil))
 	TypeMap["Shutdown"] = t((*Shutdown)(nil))
+	TypeMap["HelloRequest"] = t((*HelloRequest)(nil))
+	TypeMap["HelloResponse"] = t((*HelloResponse)(nil))
+	TypeMap["Handshake"] = t((*Handshake)(nil))
 }
 
 // Message is a generic interface for all the messages
@@ -30,6 +33,35 @@ type Message interface{}
 type Envelope struct {
 	Type    string
 	Payload json.RawMessage
+}
+
+type HelloRequest struct {
+	StartTLS bool
+}
+
+type HelloResponse struct {
+	OK    bool
+	Error string
+}
+
+type ConnectionType int
+
+const (
+	Control ConnectionType = iota
+	Tunnel
+)
+
+type SessionType int
+
+const (
+	SSH SessionType = iota
+	HTTP2
+	TCP
+)
+
+type Handshake struct {
+	SessionType    SessionType
+	ConnectionType ConnectionType
 }
 
 // AuthControl is sent by the client to create and authenticate a new session
