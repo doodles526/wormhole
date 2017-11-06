@@ -13,8 +13,9 @@ import (
 )
 
 type DispatchHandler struct {
-	sConfig   *config.ServerConfig
-	tlsConfig *tls.Config
+	sConfig      *config.ServerConfig
+	tlsConfig    *tls.Config
+	capabilities *messages.Capabilities
 
 	logger *logrus.Entry
 
@@ -32,7 +33,9 @@ func (d *DispatchHandler) Serve(conn *net.TCPConn) {
 		d.logger.Errorf("Could not create new server conn: %s", err.Error())
 	}
 
-	if err := wConn.NegotiateHello(); err != nil {
+	clientCaps, err := wConn.NegotiateHello(d.capabilities)
+	_ = clientCaps
+	if err != nil {
 		d.logger.Errorf("Error negotiating Hello: %s", err.Error())
 		return
 	}
@@ -43,20 +46,39 @@ func (d *DispatchHandler) Serve(conn *net.TCPConn) {
 		return
 	}
 
-	handshake, ok := hm.(*messages.Handshake)
+	connInfo, ok := hm.(*messages.ConnectionInfo)
 	if !ok {
 		d.logger.Errorf("Unexpected message. Expected Handshake")
 		return
 	}
 
-	switch handshake.ConnectionType {
+	if ok, reason := d.capabilities.Supports(connInfo); !ok {
+		d.logger.Warnf("Terminating unsupported connection: %s", reason)
+
+		cu := &messages.ConnectionUnsupported{
+			Error: reason,
+		}
+
+		if err := wConn.WriteMessage(cu); err != nil {
+			d.logger.Errorf("Error writing message: %s", err.Error())
+		}
+		return
+	} else {
+		ra := &messages.RequestAuth{}
+		if err := wConn.WriteMessage(ra); err != nil {
+			d.logger.Errorf("Error writing RequestAuth: %s", err.Error())
+			return
+		}
+	}
+
+	switch connInfo.ConnectionType {
 	case messages.Control:
-		if err := d.handleNewSession(handshake); err != nil {
+		if err := d.handleNewSession(connInfo); err != nil {
 			d.logger.Errorf("Error handling new session: %s", err.Error())
 			return
 		}
 	case messages.Tunnel:
-		if err := d.handleNewTunnel(handshake); err != nil {
+		if err := d.handleNewTunnel(connInfo); err != nil {
 			d.logger.Errorf("Error handling new tunnel: %s", err.Error())
 			return
 		}
@@ -91,6 +113,8 @@ func (d *DispatchHandler) handleNewSession(c *wnet.Conn, h *messages.Handshake) 
 
 	bID, err := d.validateAuthControl(authMsg)
 	if err != nil {
+		// NOTE: We will send the ControlSuccess message from each session
+		// after calling SetReady() on the session
 		aFail := &messages.AuthFailed{
 			Error: "Could not validate Token",
 		}
@@ -139,7 +163,7 @@ func (d *DispatchHandler) handleNewSession(c *wnet.Conn, h *messages.Handshake) 
 	d.sessions[sess.ID()] = sess
 	d.sm.Unlock()
 
-	if err := sess.SessionReady(); err != nil {
+	if err := sess.SetReady(); err != nil {
 		return err
 	}
 
@@ -149,7 +173,7 @@ func (d *DispatchHandler) handleNewSession(c *wnet.Conn, h *messages.Handshake) 
 
 // validateAuthTunnel ensures the auth is proper. It also returns a safe to report error
 // So you don't have to scrub the error for returning to the client
-func (d *DispatchHandler) validateAuthTunnel(m *messages.AuthTunnel) (Session, error) {
+func (d *DispatchHandler) validateAuthTunnel(m *messages.AuthTunnel) (Tunneler, error) {
 	bID, err := store.BackendIDFromToken(m.Token)
 	if err != nil {
 		d.logger.Errorf("Error retrieving backend ID: %s", err.Error())
@@ -163,6 +187,7 @@ func (d *DispatchHandler) validateAuthTunnel(m *messages.AuthTunnel) (Session, e
 	sm.RLock()
 	sess, ok := d.sessions[m.ClientID]
 	sm.RUnlock()
+
 	if !ok {
 		return nil, fmt.Errorf("No session for ClientID")
 	}
@@ -190,8 +215,19 @@ func (d *DispatchHandler) handleNewTunnel(c *wnet.Conn, h *messages.Handshake) e
 			return err
 		}
 		return err
+	} else {
+		cs := &messages.TunnelSuccess{}
+		if err := c.WriteMessage(cs); err != nil {
+			return err
+		}
 	}
 
+	// NOTE: We are adding an authenticated connection
+	// But be careful, if our connection is wrapped in TLS then
+	// it is trusted until the TLS session is ended. If we stop and start
+	// a TLS session on the same TCP connection, then we need to reauthenticate
+	// the session or else the connection is vulnerable to MITM. This means
+	// individual session types may need to manage more auth steps than provided here
 	if err := sess.AddTunnel(c); err != nil {
 		return err
 	}

@@ -28,13 +28,13 @@ const (
 type TCPSession struct {
 	baseSession
 
-	control    net.Conn
-	conns      chan net.Conn
+	control    *wnet.Conn
+	conns      chan *wnet.Conn
 	lastPingAt int64
 }
 
 // NewTCPSession creates new TCPSession struct
-func NewTCPSession(logger *logrus.Logger, nodeID string, redisPool *redis.Pool, conn net.Conn) *TCPSession {
+func NewTCPSession(logger *logrus.Logger, nodeID string, redisPool *redis.Pool, conn *wnet.Conn) *TCPSession {
 	base := baseSession{
 		id:     xid.New().String(),
 		nodeID: nodeID,
@@ -51,7 +51,7 @@ func NewTCPSession(logger *logrus.Logger, nodeID string, redisPool *redis.Pool, 
 }
 
 // AddTunnel adds a connection to the pool of tunnel connections
-func (s *TCPSession) AddTunnel(conn net.Conn) {
+func (s *TCPSession) AddTunnel(conn *wnet.Conn) {
 	select {
 	case s.conns <- conn:
 		s.logger.Info("Added Tunnel")
@@ -64,7 +64,7 @@ func (s *TCPSession) AddTunnel(conn net.Conn) {
 // GetTunnel gets a new tunnel connection from the pool of available connections.
 // If no connections are available it will request a new tunnel connection from
 // the client and it will block until tunnelTimeoutInterval.
-func (s *TCPSession) GetTunnel() (conn net.Conn, err error) {
+func (s *TCPSession) GetTunnel() (conn *wnet.Conn, err error) {
 	var ok bool
 
 	// get a tunnel connection from the pool

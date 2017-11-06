@@ -16,16 +16,20 @@ func init() {
 
 	t := func(obj interface{}) reflect.Type { return reflect.TypeOf(obj).Elem() }
 	TypeMap["AuthControl"] = t((*AuthControl)(nil))
-	TypeMap["ControlSuccess"] = t((*AuthControl)(nil))
+	TypeMap["ControlSuccess"] = t((*ControlSuccess)(nil))
 	TypeMap["AuthTunnel"] = t((*AuthTunnel)(nil))
+	TypeMap["TunnelSuccess"] = t((*TunnelSuccess)(nil))
 	TypeMap["AuthFailed"] = t((*AuthFailed)(nil))
+	TypeMap["RequestAuth"] = t((*RequestAuth)(nil))
 	TypeMap["OpenTunnel"] = t((*OpenTunnel)(nil))
 	TypeMap["Ping"] = t((*Ping)(nil))
 	TypeMap["Pong"] = t((*Pong)(nil))
 	TypeMap["Shutdown"] = t((*Shutdown)(nil))
 	TypeMap["HelloRequest"] = t((*HelloRequest)(nil))
 	TypeMap["HelloResponse"] = t((*HelloResponse)(nil))
-	TypeMap["Handshake"] = t((*Handshake)(nil))
+	TypeMap["ConnectionInfo"] = t((*ConnectionInfo)(nil))
+	TypeMap["ConnectionUnsupported"] = t((*ConnectionUnsupported)(nil))
+	TypeMap["Capabilities"] = t((*Capabilities)(nil))
 }
 
 // Message is a generic interface for all the messages
@@ -42,8 +46,62 @@ type HelloRequest struct {
 }
 
 type HelloResponse struct {
-	OK    bool
-	Error string
+	OK           bool
+	Error        string
+	Capabilities *Capabilities
+}
+
+type Capabilities struct {
+	SessionTypes []SessionType
+	Insecure     bool
+	Secure       bool
+}
+
+func (cap *Capabilities) Supports(ci *ConnectionInfo) (bool, string) {
+	if !(ci.Insecure && cap.Insecure) {
+		return false, fmt.Sprintf("Insecure connection is not supported")
+	}
+
+	if !(!ci.Insecure && cap.Secure) {
+		return false, fmt.Sprintf("Secure connection is not supported")
+	}
+
+	for _, sType := range cap.SessionTypes {
+		if sType == ci.SessionType {
+			return true, ""
+		}
+	}
+
+	var typeName string
+
+	switch ci.SessionType {
+	case SSH:
+		typeName = "ssh"
+	case HTTP2:
+		typeName = "http2"
+	case TCP:
+		typeName = "tcp"
+	}
+
+	return false, fmt.Sprintf("SessionType %s is not supported", typeName)
+}
+
+func (c1 *Capabilities) MutualCapabilities(c2 *Capabilities) Capabilities {
+	c := &Capabilities{
+		SessionTypes: []SessionType{},
+	}
+	for _, s1Type := range c1.SessionTypes {
+		for _, s2Type := range c2.SessionTypes {
+			if s1Type == s2Type {
+				c.SessionTypes = append(c.SessionTypes, s1Type)
+			}
+		}
+	}
+
+	c.Insecure = c1.Insecure && c2.Insecure
+	c.Secure = c1.Secure && c1.Secure
+
+	return c
 }
 
 type ConnectionType int
@@ -61,9 +119,14 @@ const (
 	TCP
 )
 
-type Handshake struct {
+type ConnectionInfo struct {
 	SessionType    SessionType
 	ConnectionType ConnectionType
+	Insecure       bool
+}
+
+type ConnectionUnsupported struct {
+	Error string
 }
 
 type AuthFailed struct {
@@ -75,8 +138,13 @@ type AuthControl struct {
 	Token string
 }
 
+type RequestAuth struct {
+}
+
 type ControlSuccess struct {
 }
+
+type TunnelSuccess struct{}
 
 // AuthTunnel is sent by the client to create and authenticate a tunnel connection
 type AuthTunnel struct {

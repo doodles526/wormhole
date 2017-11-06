@@ -128,7 +128,7 @@ type SSHSession struct {
 	baseSession
 
 	config  *ssh.ServerConfig
-	tcpConn net.Conn
+	tcpConn *wnet.Conn
 	conn    *ssh.ServerConn
 	reqs    <-chan *ssh.Request
 	chans   <-chan ssh.NewChannel
@@ -165,7 +165,7 @@ func (io instrumentedIO) Write(p []byte) (int, error) {
 }
 
 // NewSSHSession creates new SshSession struct
-func NewSSHSession(logger *logrus.Logger, clusterURL, nodeID string, redisPool *redis.Pool, tcpConn net.Conn, config *ssh.ServerConfig) *SSHSession {
+func NewSSHSession(logger *logrus.Logger, clusterURL, nodeID string, redisPool *redis.Pool, tcpConn *wnet.Conn, config *ssh.ServerConfig) *SSHSession {
 	base := baseSession{
 		id:         xid.New().String(),
 		nodeID:     nodeID,
@@ -185,7 +185,7 @@ func NewSSHSession(logger *logrus.Logger, clusterURL, nodeID string, redisPool *
 // RequireStream performs SSH handshake and ensures SSHSession is ready to receive
 // and send data
 func (s *SSHSession) RequireStream() error {
-	// Before use, a handshake must be performed on the incoming net.Conn.
+	// Before use, a handshake must be performed on the incoming *wnet.Conn.
 	sshConn, chans, reqs, err := ssh.NewServerConn(s.tcpConn, s.config)
 	if err != nil {
 		return err

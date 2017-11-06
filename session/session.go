@@ -22,12 +22,15 @@ type Session interface {
 	Key() string
 	Release() *messages.Release
 	RequireStream() error
-	// SessionReady indicates that the session has been added
+	// SetReady indicates that the session has been added
 	// to the proper backends and is ready for accepting tunnels
 	// For example, this could send a ControlSuccess message
-	SessionReady() error
-	AddTunnel(*wnet.Conn) error
+	SetReady() error
 	Close()
+}
+
+type UniTunneler interface {
+	AddTunnel(*wnet.Conn) error
 }
 
 type SessionArgs struct {

@@ -10,7 +10,7 @@ import (
 	"github.com/superfly/wormhole/messages"
 )
 
-type helloNegotiateFunc func(*Conn) error
+type helloNegotiateFunc func(*Conn, *messages.Capabilities) (*messages.Capabilities, error)
 
 type Conn struct {
 	conn *net.TCPConn
@@ -53,8 +53,8 @@ func NewClientConn(conn *net.TCPConn, tlsConfig *tls.Config) (*Conn, error) {
 	}, nil
 }
 
-func (c *Conn) NegotiateHello() error {
-	return c.helloNegotiateFunc(c)
+func (c *Conn) NegotiateHello(cap *messages.Capabilities) (*messages.Capabilities, error) {
+	return c.helloNegotiateFunc(c, cap)
 }
 
 func (c *Conn) Read(b []byte) (int, error) {
@@ -71,7 +71,7 @@ func (c *Conn) Read(b []byte) (int, error) {
 	c.tlsM.RLock()
 	defer c.tlsM.RUnlock()
 
-	if c.tlsEnabled() {
+	if c.TLSEnabled() {
 		return c.tlsConn.Read(b)
 	}
 
@@ -82,7 +82,7 @@ func (c *Conn) Write(b []byte) (int, error) {
 	c.tlsM.RLock()
 	defer c.tlsM.RUnlock()
 
-	if c.tlsEnabled() {
+	if c.TLSEnabled() {
 		return c.tlsConn.Write(b)
 	}
 	return c.conn.Write(b)
@@ -160,11 +160,31 @@ func (c *Conn) Close() error {
 	c.tlsM.RLock()
 	defer c.tlsM.RUnlock()
 
-	if c.tlsEnabled() {
+	if c.TLSEnabled() {
 		return c.tlsConn.Close()
 	}
 
 	return c.conn.Close()
+}
+
+func (c *Conn) LocalAddr() net.Addr {
+	return c.conn.LocalAddr()
+}
+
+func (c *Conn) RemoteAddr() net.Addr {
+	return c.conn.RemoteAddr()
+}
+
+func (c *Conn) SetDeadline(t time.Time) error {
+	return c.conn.SetDeadline(t)
+}
+
+func (c *Conn) SetReadDeadline(t time.Time) error {
+	return c.conn.SetReadDeadline(t)
+}
+
+func (c *Conn) SetWriteDeadline(t time.Time) error {
+	return c.conn.SetWriteDeadline(t)
 }
 
 func (c *Conn) TCPConn() *net.TCPConn {
@@ -179,33 +199,34 @@ func (c *Conn) TLSAvailable() bool {
 	return c.tlsConfig != nil
 }
 
-func (c *Conn) tlsEnabled() bool {
+func (c *Conn) TLSEnabled() bool {
 	c.tlsM.RLock()
 	defer c.tlsM.RUnlock()
 	return c.tlsConn == nil
 }
 
-func negotiateServerHello(c *Conn) error {
+func negotiateServerHello(c *Conn, cap *messages.Capabilities) error {
 	msg, err := c.ReadMessage()
 	if err != nil {
-		return fmt.Errorf("Could not read message: %s", err.Error())
+		return nil, fmt.Errorf("Could not read message: %s", err.Error())
 	}
 
 	helloMsg, ok := msg.(*messages.HelloRequest)
 	if !ok {
-		return fmt.Errorf("Unexpected message. Expected HelloRequest")
+		return nil, fmt.Errorf("Unexpected message. Expected HelloRequest")
 	}
 
 	if helloMsg.StartTLS {
 		if c.TLSAvailable() {
 			helloResp := &messages.HelloResponse{
-				OK: true,
+				OK:           true,
+				Capabilities: cap,
 			}
 			if err := c.WriteMessage(helloResp); err != nil {
-				return fmt.Errorf("Could not send hello response: %s", err.Error())
+				return nil, fmt.Errorf("Could not send hello response: %s", err.Error())
 			}
 			if err := c.UpgradeTLS(); err != nil {
-				return fmt.Errorf("Could not upgrade connection to TLS: %s", err.Error())
+				return nil, fmt.Errorf("Could not upgrade connection to TLS: %s", err.Error())
 			}
 		} else {
 			helloResp := &messages.HelloResponse{
@@ -213,17 +234,18 @@ func negotiateServerHello(c *Conn) error {
 				Error: "TLS not supported",
 			}
 			if err := c.WriteMessage(helloResp); err != nil {
-				return fmt.Errorf("Could not send hello response: %s", err.Error())
+				return nil, fmt.Errorf("Could not send hello response: %s", err.Error())
 			}
-			return fmt.Errorf("Connection attempted TLS upgrade when server does not support TLS")
+			return nil, fmt.Errorf("Connection attempted TLS upgrade when server does not support TLS")
 		}
 	} else {
 		if !c.TLSAvailable() {
 			helloResp := &messages.HelloResponse{
-				OK: true,
+				OK:           true,
+				Capabilities: cap,
 			}
 			if err := c.WriteMessage(helloResp); err != nil {
-				return fmt.Errorf("Could not send hello response: %s", err.Error())
+				return nil, fmt.Errorf("Could not send hello response: %s", err.Error())
 			}
 		} else {
 			helloResp := &messages.HelloResponse{
@@ -231,42 +253,57 @@ func negotiateServerHello(c *Conn) error {
 				Error: "Connections without TLS are unsupported",
 			}
 			if err := c.WriteMessage(helloResp); err != nil {
-				return fmt.Errorf("Could not send hello response: %s", err.Error())
+				return nil, fmt.Errorf("Could not send hello response: %s", err.Error())
 			}
-			return fmt.Errorf("Connection did not request TLS upgrade when it is required")
+			return nil, fmt.Errorf("Connection did not request TLS upgrade when it is required")
 		}
 	}
-	return nil
+
+	msg, err := c.ReadMessage()
+	if err != nil {
+		return fmt.Errorf("Could not read message: %s", err.Error())
+	}
+
+	cap, ok := msg.(*messages.Capabilities)
+	if !ok {
+		return fmt.Errorf("Unexpected message. Expected Capabilities")
+	}
+
+	return cap, nil
 }
 
-func negotiateClientHello(c *Conn) error {
+func negotiateClientHello(c *Conn, cap *messages.Capabilities) (*messages.Capabilities, error) {
 	hReq := &messages.HelloRequest{
 		StartTLS: c.TLSAvailable(),
 	}
 
 	if err := c.WriteMessage(hReq); err != nil {
-		return err
+		return nil, err
 	}
 
 	msg, err := c.ReadMessage()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	helloResp, ok := msg.(*messages.HelloResponse)
 	if !ok {
-		return fmt.Errorf("Unexpted message type. Expected HelloResponse")
+		return nil, fmt.Errorf("Unexpted message type. Expected HelloResponse")
 	}
 
 	if helloResp.OK {
 		if c.TLSAvailable() {
 			if err := c.UpgradeTLS(); err != nil {
-				return fmt.Errorf("Could not upgrade connection to TLS: %s", err.Error())
+				return nil, fmt.Errorf("Could not upgrade connection to TLS: %s", err.Error())
 			}
 		}
 	} else {
-		return fmt.Errorf("Error reported from server: %s", helloResp.Error)
+		return nil, fmt.Errorf("Error reported from server: %s", helloResp.Error)
 	}
 
-	return nil
+	if err := c.WriteMessage(cap); err != nil {
+		return nil, fmt.Errorf("Error writing capabilities: %s", err.Error())
+	}
+
+	return helloResp.Capabilities, nil
 }

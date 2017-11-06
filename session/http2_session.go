@@ -26,7 +26,7 @@ import (
 type HTTP2Session struct {
 	baseSession
 
-	control   net.Conn
+	control   *wnet.Conn
 	conns     wnet.ConnPool
 	server    *http.Server
 	transport *http2.Transport
@@ -40,7 +40,7 @@ type HTTP2SessionArgs struct {
 	NodeID    string
 	TLSConfig *tls.Config
 	RedisPool *redis.Pool
-	Conn      net.Conn
+	Conn      *wnet.Conn
 }
 
 // NewHTTP2Session creates new TCPSession struct
